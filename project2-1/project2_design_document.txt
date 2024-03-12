@@ -1,0 +1,147 @@
+             +--------------------------+
+             |          CS 140          |
+             | PROJECT 2: USER PROGRAMS |
+             |     DESIGN DOCUMENT      |
+             +--------------------------+
+
+---- GROUP ----
+
+>> Fill in the names and email addresses of your group members.
+
+Lee Jun <abstractalgebra@unist.ac.kr>
+
+---- PRELIMINARIES ----
+
+>> If you have any preliminary comments on your submission, notes for the
+>> TAs, or extra credit, please give them here.
+
+>> Please cite any offline or online sources you consulted while
+>> preparing your submission, other than the Pintos documentation, course
+>> text, lecture notes, and course staff.
+
+               ARGUMENT PASSING
+               ================
+
+---- DATA STRUCTURES ----
+
+>> A1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+NOTHING
+
+---- ALGORITHMS ----
+
+>> A2: Briefly describe how you implemented argument parsing.  How do
+>> you arrange for the elements of argv[] to be in the right order?
+>> How do you avoid overflowing the stack page?
+First, I sliced the file_name copy(fn_copy). And each time that I slice the it at the front and put it to the argv list, add 1 to argc and add length of the token in the len variable. After then, We can get argv list, argc(# of argv), and len which contain total length. With this, We just decrease 1 from argc-1 and decress the esp (stack goes below) by length of the argv[i]+1 (1 for null) and push the argv[i] argument. Note that we eventually needed the address of the stack after, so that I just save the address in argadd. After this, we use len for word-align. To do so, set len = (len + 1)%4, and make it as multiple of 4 by adding 0 at the stack to make efficiency. 
+Then we must put the address that we've stored in the argadd in reverse order with decreasing 4 from the esp. 
+Then Store the pointer which start from the argv[0], just by stacking the esp+4(it is very above of esp) and stack argc, return address 0 in order.
+Note that in load function, we must pass the executable argv[0] rather than full file name.
+And We didn't consider the overflowing issue in this project, because the test_case didn't need it. But We can restrict the command line length via first, make enough blank char space(e.g. 8kB) and if the length of the command line exceeds the length of the restriction (e.g. 4096), then eventually call thread_exit. 
+ 
+---- RATIONALE ----
+
+>> A3: Why does Pintos implement strtok_r() but not strtok()?
+strtok() function does not need the saved pointer when we call the function. Rather than, it just store the saved pointer in global variable. If so, the global variable, which is stored in the data section, which is shared by threads can be accessed by the other threads according to scheduler. It may cause error because the argument might not be passed what each thread want because of the truncation.
+But, when we use strtok_r() it saved the saved pointer in each thread's local variable. So, It is safe regardless the scheduling of the threads. So we used the strtok_r() rather than strtok().
+
+>> A4: In Pintos, the kernel separates commands into a executable name
+>> and arguments.  In Unix-like systems, the shell does this
+>> separation.  Identify at least two advantages of the Unix approach.
+With using Unix approach, first, we can reduce the burden of the kernel. Unlike program like shell, the kernel has a lot of tasks to do. So, if the shell replace the separation task, kernel can do more productive works.
+Second, via using the shell which is one of the program, we can do multi-programming. which means in very same time, multiple shell let the separation task can execute its own task. For example, I am using two terminal in my mac. One for upload to git from local and the other one for execute in cheetah cluster.
+
+                 SYSTEM CALLS
+                 ============
+
+---- DATA STRUCTURES ----
+
+>> B1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+In thread.h, I declared the struct file ** fd_list; to manage the file thorough file descriptor list (e.g, fd_list[fd] == *file) and it is initialized in the thread.c with t->fd_list = (struct file **)malloc(sizeof(struct file *)) as NULL pointer to verify empty place;
+
+>> B2: Describe how file descriptors are associated with open files.
+>> Are file descriptors unique within the entire OS or just within a
+>> single process?
+When the file opened by system call open, It first check the file name is valid. If so, find file descriptor that is not using via checking each place of the fd_list. If it is NULL, then put the opened file on the list. 
+Note that File descriptors need not to be unique entire OS. Because By sharing the fd_list it is burden to manage all of the file descriptor which might be so big to handle it, if it manage all of the fd in the OS. And also, it is not good for the security if the fd is shared over the OS. So the file descriptors are unique within just single process. 
+---- ALGORITHMS ----
+
+>> B3: Describe your code for reading and writing user data from the
+>> kernel.
+
+>> B4: Suppose a system call causes a full page (4,096 bytes) of data
+>> to be copied from user space into the kernel.  What is the least
+>> and the greatest possible number of inspections of the page table
+>> (e.g. calls to pagedir_get_page()) that might result?  What about
+>> for a system call that only copies 2 bytes of data?  Is there room
+>> for improvement in these numbers, and how much?
+
+>> B5: Briefly describe your implementation of the "wait" system call
+>> and how it interacts with process termination.
+
+>> B6: Any access to user program memory at a user-specified address
+>> can fail due to a bad pointer value.  Such accesses must cause the
+>> process to be terminated.  System calls are fraught with such
+>> accesses, e.g. a "write" system call requires reading the system
+>> call number from the user stack, then each of the call's three
+>> arguments, then an arbitrary amount of user memory, and any of
+>> these can fail at any point.  This poses a design and
+>> error-handling problem: how do you best avoid obscuring the primary
+>> function of code in a morass of error-handling?  Furthermore, when
+>> an error is detected, how do you ensure that all temporarily
+>> allocated resources (locks, buffers, etc.) are freed?  In a few
+>> paragraphs, describe the strategy or strategies you adopted for
+>> managing these issues.  Give an example.
+
+---- SYNCHRONIZATION ----
+
+>> B7: The "exec" system call returns -1 if loading the new executable
+>> fails, so it cannot return before the new executable has completed
+>> loading.  How does your code ensure this?  How is the load
+>> success/failure status passed back to the thread that calls "exec"?
+
+>> B8: Consider parent process P with child process C.  How do you
+>> ensure proper synchronization and avoid race conditions when P
+>> calls wait(C) before C exits?  After C exits?  How do you ensure
+>> that all resources are freed in each case?  How about when P
+>> terminates without waiting, before C exits?  After C exits?  Are
+>> there any special cases?
+
+---- RATIONALE ----
+
+>> B9: Why did you choose to implement access to user memory from the
+>> kernel in the way that you did?
+
+>> B10: What advantages or disadvantages can you see to your design
+>> for file descriptors?
+
+>> B11: The default tid_t to pid_t mapping is the identity mapping.
+>> If you changed it, what advantages are there to your approach?
+
+               SURVEY QUESTIONS
+               ================
+
+Answering these questions is optional, but it will help us improve the
+course in future quarters.  Feel free to tell us anything you
+want--these questions are just to spur your thoughts.  You may also
+choose to respond anonymously in the course evaluations at the end of
+the quarter.
+
+>> In your opinion, was this assignment, or any one of the three problems
+>> in it, too easy or too hard?  Did it take too long or too little time?
+
+>> Did you find that working on a particular part of the assignment gave
+>> you greater insight into some aspect of OS design?
+
+>> Is there some particular fact or hint we should give students in
+>> future quarters to help them solve the problems?  Conversely, did you
+>> find any of our guidance to be misleading?
+
+>> Do you have any suggestions for the TAs to more effectively assist
+>> students, either for future quarters or the remaining projects?
+
+>> Any other comments?

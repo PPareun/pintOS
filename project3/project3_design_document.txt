@@ -1,0 +1,229 @@
+                    +---------------------------+
+        |   CS 140    |
+        | PROJECT 3: VIRTUAL MEMORY |
+        |    DESIGN DOCUMENT  |
+        +---------------------------+
+
+---- GROUP ----
+
+>> Fill in the names and email addresses of your group members.
+
+Lee Jun <abstractalgebra@unist.ac.kr>
+
+---- PRELIMINARIES ----
+
+>> If you have any preliminary comments on your submission, notes for the
+>> TAs, or extra credit, please give them here.
+
+>> Please cite any offline or online sources you consulted while
+>> preparing your submission, other than the Pintos documentation, course
+>> text, lecture notes, and course staff.
+
+      PAGE TABLE MANAGEMENT
+      =====================
+
+---- DATA STRUCTURES ----
+
+>> A1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+struct page{
+    struct file *file;
+    off_t ofs;
+    uint8_t *upage;
+    uint32_t read_bytes;
+    uint32_t zero_bytes;
+    bool writable;
+    struct hash_elem page_elem;
+    int swap_index;
+};
+
+struct frame_table{
+    struct list_elem frame_elem;
+    bool LRU_num;
+    uint8_t *kpage;
+    struct page *page;
+};
+
+these values from the load_segment (struct file *file, off_t ofs, uint8_t *upage,
+              uint32_t read_bytes, uint32_t zero_bytes, bool writable) of process.c
+Before VM project, the pintos tends to load every segment when the load call of the kernel happens. But for now, the PINTOS does not load the segment at first. rather than save the properties about the file, offset, read and zero bytes.. etc so that when the user page is page-fault, do not hit, then find the file via hash with key : upage. and the read the proper file with upper variables which not loaded just saved at the load_segment of process level and load to kernel.
+
+---- ALGORITHMS ----
+
+>> A2: In a few paragraphs, describe your code for locating the frame,
+>> if any, that contains the data of a given page.
+
+It is kinda complicated. At first, if the page_fault address occur, then verify whether the corresponding file_page is available with the key of pg_round_down(fault_addr)(because we want to get the full page so round down to minima page starting address). And then if the file_page is available which means that corresponding file is already loaded from the load_segment, then allocate the kernel page. If the kpage is not allocated, which means that kpage is full then select the victim from the frame using clock algorithm.(at first i planned clock algorithm but the entire swap fails). 
+
+>> A3: How does your code coordinate accessed and dirty bits between
+>> kernel and user virtual addresses that alias a single frame, or
+>> alternatively how do you avoid the issue?
+
+I stored the upage at the page struct, and also I stored kpage and the page structure at the frame structure. So when the selecting the frame is needed, when swapping then from using page structure and with the structure i can access upage that mapped with corresponding kpage. And also with upage, when the kpage is not selected, I can access the page structure to fetch corresponding file. So, if I access the frame, I can get mapped kpage and upage for two connected structure.
+
+---- SYNCHRONIZATION ----
+
+>> A4: When two user processes both need a new frame at the same time,
+>> how are races avoided?
+
+If so we can avoid this problem via locking. If someone try to access the frame, for example the swap, then lock the algorithm to prevent the other process can't access the frame table. so every code that modifying the frame, we can lock them to avoid the race.
+---- RATIONALE ----
+
+>> A5: Why did you choose the data structure(s) that you did for
+>> representing virtual-to-physical mappings?
+
+It is very helpful to use both page and frame as hash_table. Because of the Access time is O(1). Due to the memory is not allocated in the contiguous manner, we must need to store the upage to directly find the file. So it means that when the thread created, we can put the appropriate hash page elem to that thread and when the lazy loading is needed then we can directly pick the data without searching.
+
+           PAGING TO AND FROM DISK
+           =======================
+
+---- DATA STRUCTURES ----
+
+>> B1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+struct frame_table{
+    struct list_elem frame_elem;
+    bool LRU_num;
+    uint8_t *kpage;
+    struct page *page;
+};
+
+This is for see the allocated frame now.
+I thought that no swap slot is needed, rather than just use the page structure that I've defined upper, just record the swap index at every page and if it is not swapped it is initially -1.
+
+---- ALGORITHMS ----
+
+>> B2: When a frame is required but none is free, some frame must be
+>> evicted.  Describe your code for choosing a frame to evict.
+
+It doesn't work actually. But my intention was following. First, check whether the kpage allocated is possible via palloc(USER), if it is not valid, possible then it must be the kernel page which is mapped to the corresponding frame is full. Then use the CLock algorithm to pick the evict using pagedir_is_dirty, and pagedir_set_dirty. And then using bitmap (sector size 512, and the page size is 4096 so the 8 sector for page.) so for 8 number loop, it write to the disk. The proper location of the disk decided by the bitmap. so find the bitmap which is 1(valid) and times 8. And also modify evicted frame's page's swap index.  Then pick the evict and find the page structure via hash with the key as upage. Pick the page and mount to the frame table. and using pagedir_set_page, link those user and kernel pages.
+
+>> B3: When a process P obtains a frame that was previously used by a
+>> process Q, how do you adjust the page table (and any other data
+>> structures) to reflect the frame Q no longer has?
+We still maintain the page structure. rather than link the following kernel page to newly selected victim's mapped kernel page. So it means there is upage but it is not connected to the kpage and the frame. just change the new upage and victim's kernel page mapped.
+
+>> B4: Explain your heuristic for deciding whether a page fault for an
+>> invalid virtual address should cause the stack to be extended into
+>> the page that faulted.
+
+If the stack needs to be extended, then it must be guaranteed that the hashed page with the round downed fault address as key is nothing. Because, indeed we do not insert that stack page when we loaded. So in this case, we cannot get the page structure which has file and etc, so just extend the page if the address is valid (user address,.. etc).
+Then just load the stack via using upage as the PHYS_BASE - page_size, which means one page size extended.
+
+---- SYNCHRONIZATION ----
+
+>> B5: Explain the basics of your VM synchronization design.  In
+>> particular, explain how it prevents deadlock.  (Refer to the
+>> textbook for an explanation of the necessary conditions for
+>> deadlock.)
+
+To prevent the dead_lock and synchronous problem I used the lock at swap. When the swap out and swap in is happening which means the writing to the disk from frame is happening, it must guarantee that the other cannot come to this area if so it has race condition. And the lock will be released right after the modification of the disk. So it guarantee that no dead_lock would be happens.
+
+>> B6: A page fault in process P can cause another process Q's frame
+>> to be evicted.  How do you ensure that Q cannot access or modify
+>> the page during the eviction process?  How do you avoid a race
+>> between P evicting Q's frame and Q faulting the page back in?
+
+As I said before, I used the lock every reading and the writing of the disk. so that we can prevent the case when the other process enter the same disk space. And with the lock in terms of whole process of the swap, we can prevent those kinds of the race condition. But I FAILED.
+
+>> B7: Suppose a page fault in process P causes a page to be read from
+>> the file system or swap.  How do you ensure that a second process Q
+>> cannot interfere by e.g. attempting to evict the frame while it is
+>> still being read in?
+I also said before, I prevent those case by using lock when reading and writing to the disk. It will prevent those cases.
+
+>> B8: Explain how you handle access to paged-out pages that occur
+>> during system calls.  Do you use page faults to bring in pages (as
+>> in user programs), or do you have a mechanism for "locking" frames
+>> into physical memory, or do you use some other design?  How do you
+>> gracefully handle attempted accesses to invalid virtual addresses?
+
+When some page is paged-out when the that corresponding upage is needed, then find the upage by hash with element is the address of upage. Once we get the file page structure, it must be stored swapped out location of the disk. Then just visit that disk and read the 8 sectors there and write it to the allcoted kpage(if not valid then select the victim) and then finally with pagedir_set, we can map the upage, kpage and frame accordingly.
+
+---- RATIONALE ----
+
+>> B9: A single lock for the whole VM system would make
+>> synchronization easy, but limit parallelism.  On the other hand,
+>> using many locks complicates synchronization and raises the
+>> possibility for deadlock but allows for high parallelism.  Explain
+>> where your design falls along this continuum and why you chose to
+>> design it this way.
+
+My way is the single lock. Because the many lock I tried from Project 2 causes many errors. So I just want simple structure for purpose is only avoiding deadlock. And also I think that correct output of the OS is more important than the efficiency. So I picked this design.
+
+       MEMORY MAPPED FILES
+       ===================
+
+---- DATA STRUCTURES ----
+
+>> C1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+
+struct mmap_elem{
+    struct file *file;
+    uint8_t *upage;
+};
+
+struct mmap_elem ** mmap_list;
+
+I set the mmap_list to find the corresponding map id and get the mmap element. And also the structure of the mmap_elem storing the file that the mmap is containing and the page of the mmap is directly connected. This will make the munmap possible.
+---- ALGORITHMS ----
+
+>> C2: Describe how memory mapped files integrate into your virtual
+>> memory subsystem.  Explain how the page fault and eviction
+>> processes differ between swap pages and other pages.
+
+when the system call is called, we just check the whether the fd is right or the addr is valid. addr must point the start of the page and the there must be pre allocated mmap and also fd is bigger than 2 and lower than 128.. etc
+If these test is finished, then file reopen(one is opened by the other syscall) and then as we've done in the load_segment, store the page structure which contains the ofs, file, upage, read_bytes,... and hash them so that if the process needs the mmap file, then it can directly bring this.(so again not the direct loading, lazy loading) and set the mmap which index is empty as new mmap index and set the mmap_elem of this to have file and addr.
+When munmap the upage of the mmap_elem is dirty then write back to the file. not the disk. But the evicting in the page fault is just store whole kpage to the disk.  
+
+page fault and eviction of process 
+
+
+>> C3: Explain how you determine whether a new file mapping overlaps
+>> any existing segment.
+
+is_user_vaddr(addr) == 0||pagedir_get_page(pd, addr)!=NULL by using this we can check the corresponding address is really mapped into the kpage and frame or not. So that if get page is not null it means that the addr is mapping to the other thing which might be the existing segment. 
+
+
+---- RATIONALE ----
+
+>> C4: Mappings created with "mmap" have similar semantics to those of
+>> data demand-paged from executables, except that "mmap" mappings are
+>> written back to their original files, not to swap.  This implies
+>> that much of their implementation can be shared.  Explain why your
+>> implementation either does or does not share much of the code for
+>> the two situations.
+
+I don't know whether I fully understand, but I think that yes using mmap can be shared the code of the demand page. So i just almost copy and paste the code of the demand paging. Because the majority part, that storing the file and ofs read byte is same for two implementation. 
+
+
+
+         SURVEY QUESTIONS
+         ================
+
+Answering these questions is optional, but it will help us improve the
+course in future quarters.  Feel free to tell us anything you
+want--these questions are just to spur your thoughts.  You may also
+choose to respond anonymously in the course evaluations at the end of
+the quarter.
+
+>> In your opinion, was this assignment, or any one of the three problems
+>> in it, too easy or too hard?  Did it take too long or too little time?
+
+>> Did you find that working on a particular part of the assignment gave
+>> you greater insight into some aspect of OS design?
+
+>> Is there some particular fact or hint we should give students in
+>> future quarters to help them solve the problems?  Conversely, did you
+>> find any of our guidance to be misleading?
+
+>> Do you have any suggestions for the TAs to more effectively assist
+>> students, either for future quarters or the remaining projects?
+
+>> Any other comments?

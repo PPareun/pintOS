@@ -1,0 +1,191 @@
+      +--------------------+
+      |        CS 140      |
+      | PROJECT 1: THREADS |
+      |   DESIGN DOCUMENT  |
+      +--------------------+
+           
+---- GROUP ----
+
+>> Fill in the names and email addresses of your group members.
+
+Lee Jun <abstractalgebra@unist.ac.kr>
+
+
+---- PRELIMINARIES ----
+
+>> If you have any preliminary comments on your submission, notes for the
+>> TAs, or extra credit, please give them here.
+
+>> Please cite any offline or online sources you consulted while
+>> preparing your submission, other than the Pintos documentation, course
+>> text, lecture notes, and course staff.
+
+           ALARM CLOCK
+           ===========
+
+---- DATA STRUCTURES ----
+
+>> A1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+struct thread
+{
+  // other variables and structural members, enum are unchanged
+  int64_t endtime;
+};
+>>> It is a variable applied individually to a thread that has been put into a sleep state by the timer_sleep function
+
+static struct list sleep_list;
+>>> It is a list that containing ticks increasing order sleeping thread, and it is made for reducing time complexity rather than traveling all_list.
+
+---- ALGORITHMS ----
+
+>> A2: Briefly describe what happens in a call to timer_sleep(),
+>> including the effects of the timer interrupt handler.
+
+When timer_sleep() is called, timer_ticks() + user selected sleep_time(ticks variable in timer_sleep) is assigned to int64_t endtime.
+Then make sure that INTR_OFF and put the current thread to appropriate position in the sleep_list which has elements endtime increasing order by timer_proper_pos function. 
+Change current thread is switched to a block state and schedule by thread_block().
+Then blocked thread do not exist in ready list because they were removed from ready list by schedule() and exists in all_list and sleep_list
+And finally interrupt state changes to original one.
+
+And then, each time timer interrupt being called, update ticks and call thread_wakeup function.
+thread_wakeup function check the very beginning of front sleep_list(e.g. 1 ~ at most len(sleep_list)) and then in the loop if the endtime is smaller than now ticks, kick out the front and put it to ready_list. else, just break loop.
+
+
+>> A3: What steps are taken to minimize the amount of time spent in
+>> the timer interrupt handler?
+
+we add sleep_list which has order that "increasing endtime order" by timer_proper_pos function. So that, we only pay attention to very beginning of sleep_list. The total time complexity is O(n) from timer_proper_pos which makes sleep_list sorted. 
+And it can avoid from busy wait by adding endtime in TCB so that we don't have to wait until specific time spent. Rather than we just check the first element of the sleep_list periodically(when ticks has been updated).
+
+---- RATIONALE ----
+
+>> A6: Why did you choose this design?  In what ways is it superior to
+>> another design you considered?
+When we first design this project, we just used all_list to verify each process whether it is slept or not and whether time to wakeup or not by checking block state and endtime. At that time, we just think that we can reduce the memory space by not adding some additional sleep_list.
+And it worked perfect. 
+But! in terms of time complexity, it must be check all of the threads in the all_list even if it is not sleeping state. len(all_list) > len(sleep_list)
+So, to reduce time complexity, it is better to use sleep_list.
+Additionally, to optimize this problem we just made sleep_list as endtime ticks increasing order.
+If so, each ticks spent, we only pay attention to very beginning of sleep_list.
+If sleep_list's front endtime is bigger than now_ticks, we don't have to check the leftover. 
+So that, it is much simpler and faster than setting min_ticks of sleep_list as the original project1_document saids, because no complex updating of min_ticks and no traveling the sleep_list finding min_ticks. 
+So it is superior to those who used all_list or min_ticks with sleep_list 
+
+
+       PRIORITY SCHEDULING
+       ===================
+
+---- DATA STRUCTURES ----
+
+>> B1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+There is no change in structure or member. Instead, as will be described later, there are many changes to the function.
+
+
+---- RATIONALE ----
+
+>> B7: Why did you choose this design?  In what ways is it superior to
+>> another design you considered?
+
+
+Every thread has a priority. Therefore, even when pintos is running, it is more useful to insert and run threads according to priority.
+
+There are two cases of threads that go into ready list.
+One is a thread that goes directly into the ready list from sleep_list,
+and the other is a thread that has been created.
+We newly define void thread_proper_pos(); functions to solve these problems.
+This function is an algorithm that sorts the threads of the ready_list at the two cases above in priority decreasing order.
+
+At first, the priority is compared with the thread being executed. If the priority of the new thread is high,
+put the new thread at the front of the ready list and then it is scheduled by thread_yield() to change the order.
+Otherwise, scan from the beginning of the ready list and insert a new thread where appropriate, and if the priority is lowest,
+the new thread will be put at the end.
+
+This thread_proper_pos insertion algorithm may save much time compared to the algorithm that traveling non-sorted ready list every each time. traveling non-sorted ready list every each time algorithm will have a time complexity of O(n).
+However, it is trivial that our algorithm will be advantageous in actual average time complexity because alternative algorithm needs to check every threads in ready_list while, our algorithm needs just part of the ready_list.
+
+BUT!!
+If it is the case that priority of the ready_list might be change, then my algorithm will fail and rather than we must use sorting algorithm or alternative algorithm that check every thread on ready_list.
+In this case, the alternative algorithm would be the best.
+However, this project is not this case, so this algorithm was sufficiently adopted.
+
+
+        ADVANCED SCHEDULER
+        ==================
+
+---- DATA STRUCTURES ----
+
+>> C1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+---- ALGORITHMS ----
+
+>> C2: Suppose threads A, B, and C have nice values 0, 1, and 2.  Each
+>> has a recent_cpu value of 0.  Fill in the table below showing the
+>> scheduling decision and the priority and recent_cpu values for each
+>> thread after each given number of timer ticks:
+
+timer  recent_cpu    priority   thread
+ticks   A   B   C   A   B   C   to run
+-----  --  --  --  --  --  --   ------
+ 0
+ 4
+ 8
+12
+16
+20
+24
+28
+32
+36
+
+>> C3: Did any ambiguities in the scheduler specification make values
+>> in the table uncertain?  If so, what rule did you use to resolve
+>> them?  Does this match the behavior of your scheduler?
+
+>> C4: How is the way you divided the cost of scheduling between code
+>> inside and outside interrupt context likely to affect performance?
+
+---- RATIONALE ----
+
+>> C5: Briefly critique your design, pointing out advantages and
+>> disadvantages in your design choices.  If you were to have extra
+>> time to work on this part of the project, how might you choose to
+>> refine or improve your design?
+
+>> C6: The assignment explains arithmetic for fixed-point math in
+>> detail, but it leaves it open to you to implement it.  Why did you
+>> decide to implement it the way you did?  If you created an
+>> abstraction layer for fixed-point math, that is, an abstract data
+>> type and/or a set of functions or macros to manipulate fixed-point
+>> numbers, why did you do so?  If not, why not?
+
+         SURVEY QUESTIONS
+         ================
+
+Answering these questions is optional, but it will help us improve the
+course in future quarters.  Feel free to tell us anything you
+want--these questions are just to spur your thoughts.  You may also
+choose to respond anonymously in the course evaluations at the end of
+the quarter.
+
+>> In your opinion, was this assignment, or any one of the three problems
+>> in it, too easy or too hard?  Did it take too long or too little time?
+
+>> Did you find that working on a particular part of the assignment gave
+>> you greater insight into some aspect of OS design?
+
+>> Is there some particular fact or hint we should give students in
+>> future quarters to help them solve the problems?  Conversely, did you
+>> find any of our guidance to be misleading?
+
+>> Do you have any suggestions for the TAs to more effectively assist
+>> students, either for future quarters or the remaining projects?
+
+>> Any other comments?

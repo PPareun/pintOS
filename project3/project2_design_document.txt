@@ -1,0 +1,211 @@
+             +--------------------------+
+             |          CS 140          |
+             | PROJECT 2: USER PROGRAMS |
+             |     DESIGN DOCUMENT      |
+             +--------------------------+
+
+---- GROUP ----
+
+>> Fill in the names and email addresses of your group members.
+
+Lee Jun <abstractalgebra@unist.ac.kr>
+
+---- PRELIMINARIES ----
+
+>> If you have any preliminary comments on your submission, notes for the
+>> TAs, or extra credit, please give them here.
+
+>> Please cite any offline or online sources you consulted while
+>> preparing your submission, other than the Pintos documentation, course
+>> text, lecture notes, and course staff.
+
+               ARGUMENT PASSING
+               ================
+
+---- DATA STRUCTURES ----
+
+>> A1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+NOTHING
+
+---- ALGORITHMS ----
+
+>> A2: Briefly describe how you implemented argument parsing.  How do
+>> you arrange for the elements of argv[] to be in the right order?
+>> How do you avoid overflowing the stack page?
+
+First, I sliced the file_name copy(fn_copy). And each time that I slice the it at the front and put it to the argv list, add 1 to argc and add length of the token in the len variable. After then, We can get argv list, argc(# of argv), and len which contain total length. With this, We just decrease 1 from argc-1 and decress the esp (stack goes below) by length of the argv[i]+1 (1 for null) and push the argv[i] argument. Note that we eventually needed the address of the stack after, so that I just save the address in argadd. After this, we use len for word-align. To do so, set len = (len + 1)%4, and make it as multiple of 4 by adding 0 at the stack to make efficiency. 
+Then we must put the address that we've stored in the argadd in reverse order with decreasing 4 from the esp. 
+Then Store the pointer which start from the argv[0], just by stacking the esp+4(it is very above of esp) and stack argc, return address 0 in order.
+Note that in load function, we must pass the executable argv[0] rather than full file name.
+And We didn't consider the overflowing issue in this project, because the test_case didn't need it. But We can restrict the command line length via first, make enough blank char space(e.g. 8kB) and if the length of the command line exceeds the length of the restriction (e.g. 4096), then eventually call thread_exit. 
+ 
+---- RATIONALE ----
+
+>> A3: Why does Pintos implement strtok_r() but not strtok()?
+
+strtok() function does not need the saved pointer when we call the function. Rather than, it just store the saved pointer in global variable. If so, the global variable, which is stored in the data section, which is shared by threads can be accessed by the other threads according to scheduler. It may cause error because the argument might not be passed what each thread want because of the truncation.
+But, when we use strtok_r() it saved the saved pointer in each thread's local variable. So, It is safe regardless the scheduling of the threads. So we used the strtok_r() rather than strtok().
+
+>> A4: In Pintos, the kernel separates commands into a executable name
+>> and arguments.  In Unix-like systems, the shell does this
+>> separation.  Identify at least two advantages of the Unix approach.
+With using Unix approach, first, we can reduce the burden of the kernel. Unlike program like shell, the kernel has a lot of tasks to do. So, if the shell replace the separation task, kernel can do more productive works.
+Second, via using the shell which is one of the program, we can do multi-programming. which means in very same time, multiple shell let the separation task can execute its own task. For example, I am using two terminal in my mac. One for upload to git from local and the other one for execute in cheetah cluster.
+
+                 SYSTEM CALLS
+                 ============
+
+---- DATA STRUCTURES ----
+
+>> B1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+In thread.h, I declared the struct file ** fd_list; to manage the file thorough file descriptor list (e.g, fd_list[fd] == *file) and it is initialized in the thread.c with t->fd_list = (struct file **)calloc(sizeof(struct file *)) as 0 pointer to verify empty place;
+tid_t * tid_list; to contain the child processes' tid as an list. so that we can check the child processes are terminate or not by this list and (thread_by_tid function.)
+struct semaphore thread_S;
+struct semaphore exit_S;
+Also I declared two semaphore in thread.h to check the sign of the thread_exit of the child processes. So that it constructed as sema_down(&(child->thread_S));, sema_up(&(child->exit_S)); order in process wait to verify no other process is currently wait and the later sema_up is for increase semaphore of the child exit to prevent the duplicated execution with the process_wait and process_exit. 
+struct lock syscall_S; to satisfy the syscall's synchronization. So that it can proceed the syscall in order. And one more semaphore is about the load_S that to prevent memory allocation fail that load is not fully execute, I set the load_semaphore to ensure the whole load execution done.  
+Also I added one more bool type good_child to verify the load of the exec did well on the child process or not.
+
+>> B2: Describe how file descriptors are associated with open files.
+>> Are file descriptors unique within the entire OS or just within a
+>> single process?
+When the file opened by system call open, It first check the file name is valid. If so, find file descriptor that is not using via checking each place of the fd_list. If it is NULL, then put the opened file on the list. 
+Note that File descriptors need not to be unique entire OS. Because By sharing the fd_list it is burden to manage all of the file descriptor which might be so big to handle it, if it manage all of the fd in the OS. And also, it is not good for the security if the fd is shared over the OS. So the file descriptors are unique within just single process. 
+---- ALGORITHMS ----
+
+>> B3: Describe your code for reading and writing user data from the
+>> kernel.
+1. Reading : first it checks the fd value, and if it is equal to 0, it means STDIN so that call the input_getc(). If not, then verify the fd_list's range(128) and if it exceeds the range, then return -1 immediately.
+If the two test success, then pull out the desired file using fd_list[fd-2](0, 1 for stdin stdout) and read the file using file_read(). To satisfy the synchronization problem, I set the semaphore protect to file_read, so that it can avoid entering critical section(file) together.
+
+2. Writing : first it checks the fd value, and if it is equal to 1, it means STDOUT so that call the putbuf	(). If not, then verify the fd_list's range(128) and if it exceeds the range, then return -1 immediately.
+
+>> B4: Suppose a system call causes a full page (4,096 bytes) of data
+>> to be copied from user space into the kernel.  What is the least
+>> and the greatest possible number of inspections of the page table
+>> (e.g. calls to pagedir_get_page()) that might result?  What about
+>> for a system call that only copies 2 bytes of data?  Is there room
+>> for improvement in these numbers, and how much?
+The least possible number is obiously 1 call of the pagedir_get_page() because if the page table is tightly bounded in the size of the full page, then it doesn't exceed any more. so one get page is enough.
+For the greatest possible number is 2 because as we noted in the lecture, the page can be in the middle of the boundary, if so we can call one below and one above get page function. So total 2 at most. But if the page is not in contiguous manner(scattered), than it must read at most every 1bytes in each page. so it'll consume 4096 times of the get page().
+It also holds for the 2bytes of data. Imagine one byte above and one byte below page boundary. If so we must see all the 2 pages. If not, then we can see only 1page.
+
+It might not be get better, because we really need to see all the 2 pages at most. The best way to prevent this problem is just try to allow large internal-fragmentation so that use only one page at most case and decreasing page_size.
+
+>> B5: Briefly describe your implementation of the "wait" system call
+>> and how it interacts with process termination.
+For wait sys_call, I set the tid_list to hold the child processes' tid data. The tid_list data would be updated in the thread execute, when the thread has been exec by the parrent. And when some process call the wait, then call the process_wait and then check the child's tid via tid_list. 
+And call the thread by tid via thread_by_tid function(implement via all_elem list). If such tid doesn't exist, then return NULL. If thread_by_tid is NULL, then it means that wait is not valid, due to the thread doesn't exist anymore, so that immediately return -1. 
+And if such thread exists, then get alarm with the sema_down(child thread's thread_S). When the exit called on the target child process, then we just call the sema_up(child thread's thread_S) to make execution of the wait process. And then make init of the tid_list[index] and store exit_status of the child. (if after call of the thread_exit, then it'll not exist) and the make sema_up((child->exit_S)). And sema_down((child->exit_S)) at the below of sema_up(child thread's thread_S) of the process_exit() makes prevent the proceed of the exit, due to we want the child's exit state. And also, it prevents the termination of the child it self by blocking with sema_down((child->exit_S)). So, we prevent this problem with exit_S semaphore. And then return the stored exit_statue. But if no such match child_tid, then it means no such child, so that just return -1;
+
+>> B6: Any access to user program memory at a user-specified address
+>> can fail due to a bad pointer value.  Such accesses must cause the
+>> process to be terminated.  System calls are fraught with such
+>> accesses, e.g. a "write" system call requires reading the system
+>> call number from the user stack, then each of the call's three
+>> arguments, then an arbitrary amount of user memory, and any of
+>> these can fail at any point.  This poses a design and
+>> error-handling problem: how do you best avoid obscuring the primary
+>> function of code in a morass of error-handling?  Furthermore, when
+>> an error is detected, how do you ensure that all temporarily
+>> allocated resources (locks, buffers, etc.) are freed?  In a few
+>> paragraphs, describe the strategy or strategies you adopted for
+>> managing these issues.  Give an example.
+
+The bad-pointer test is passed with the code about
+void verify(const void * vaddr){
+    struct thread *cur = thread_current ();
+    uint32_t *pd;
+    pd = cur->pagedir;
+    if(is_user_vaddr(vaddr) == 0 || pagedir_get_page(pd, vaddr) == NULL){
+        exit(-1);
+    }
+}
+this check the validation of the desired input of the each syscall. See the pagedir of the now running thread and the virtual address is not user address space or, get_page, which get the page with the pd and virtual address combination, if it is failed to get the page, then it means that virtual address is not valid. So it will exit the thread with status(-1).
+So, we can prevent reading bad-pointer in advance by checking with this function. If it this function test fails, then just exit the thread with exit status -1. For example the open syscall calls verify(f->esp + 4); the stack pointer and then also check the real input of the function via 
+int open (const char *file){
+    verify(file);
+}
+this.
+
+For each exit call, I close all the opened file and then when the process_exit called via exit(-1), I free the calloced tid_list and fd_list to make free memory. So it means, whenever the process must call the exit() function and the process_exit function which called by the exit() will declare the free of the allocated tid_list, fd_list. So we're free from this problem.
+
+
+---- SYNCHRONIZATION ----
+
+>> B7: The "exec" system call returns -1 if loading the new executable
+>> fails, so it cannot return before the new executable has completed
+>> loading.  How does your code ensure this?  How is the load
+>> success/failure status passed back to the thread that calls "exec"?
+
+We check it double. First we prevent the load function's open fail by testing the filesys_open(strtok_r (fn_copy, " ", &save_ptr)) is null or not and if it is null then return it -1 because it is invalid file name or "MEMORY ALLOCAION FAIL" so it cannot be loaded. And Also I set the good_child bool data to prevent the load fail and it is if the success == false in the process_start, then let the good_child is false and then it calls the exit(-1). And then we process the false good_child via if so, reset the good_child as true and then return -1. So to sum up, the success / failure status passed back to the thread via syscall.h's bool good_child. 
+And to prevent the "MEMORY ALLOCATION FAIL" which the load instruction is not fully executed, I set the semaphore load_S that the semaphore set the critical section as almost whole start_process() function to make sure it is not terminated when it is currently starting. And sema_up when the execution end at the end of the start_process, and if so, 
+{
+tid_t ret = process_execute(cmd_line);
+sema_down(&load_S);
+}
+check the the loading really executed or not at the syscall.c exec(). then proceed the leftover and then sema_up(&load_S); to free for other process.
+
+>> B8: Consider parent process P with child process C.  How do you
+>> ensure proper synchronization and avoid race conditions when P
+>> calls wait(C) before C exits?  After C exits?  How do you ensure
+>> that all resources are freed in each case?  How about when P
+>> terminates without waiting, before C exits?  After C exits?  Are
+>> there any special cases?
+1. wait(C) before C exits, it will terminate with the return value -1 if no such tid in the tid_list if it is, then return the child exit status. 
+2. If the child exits, then the child exit notify the parent that the termination of the child process using semaphore and give the exit status to the parent process to notice the termination of the child.
+3. In both cases we can check the freed memory, because it eventually call the exit() call and it ensure the free memory anyway.
+4. In this project, I don't consider the case of the termination of the child when the parent terminate. So, the child process is now free to live individually, without supervise of the parent.
+5. if c terminates and then p does not wait, then it will not violate the any synch and race condition and also the free resource problem, due to both of the process eventually terminate individually without the further syscall like wait.    
+And as we discussed before, the exit() function is good at free!
+
+
+
+---- RATIONALE ----
+
+>> B9: Why did you choose to implement access to user memory from the
+>> kernel in the way that you did?
+It has benefit that prevent really access to invalid memory before calling the actual function. It just verify the is this real user memory or not and if not, exit the process with -1 status. 
+The pagedir_get_page check the pd's virtual address mapping is really valid physical address or not, and if not then return null. So all we need to do is check the pagedir_get_page return is null or not. If it is null, then exit(-1), if not, the address is valid, so that run the leftover.
+
+
+>> B10: What advantages or disadvantages can you see to your design
+>> for file descriptors?
+PROS:
+1. Thread can handle the fd easily without any more memory or time consumption to access it compare the 2d array that handle the tid-fd mapping.  It will use the bunch of time to find acceptable tid.
+2. The fd is only accessable in terms of each thread. So it can prevent the those cases that vulnerability issues that might supervise other process's opened file list.
+CONS:
+1. The thread information is managed by not the userprog, rather than managed by the kernel so that the memory consumption of the kernel is limited. 
+2. The Hashmap might be the good option, because it can access the data in short, constant time, compare to linear time use of the fd_list that I implemented.
+>> B11: The default tid_t to pid_t mapping is the identity mapping.
+>> If you changed it, what advantages are there to your approach?
+For this project i used the tid_t by convenience. Even if i changed in the pid_t it seems no advantage until now. But if if the process allow the multi-threading then we must verify the difference between thread and process id, due to each process can obtain multiple thread. and then it is not one to one mapping anymore.
+
+               SURVEY QUESTIONS
+               ================
+
+Answering these questions is optional, but it will help us improve the
+course in future quarters.  Feel free to tell us anything you
+want--these questions are just to spur your thoughts.  You may also
+choose to respond anonymously in the course evaluations at the end of
+the quarter.
+
+>> In your opinion, was this assignment, or any one of the three problems
+>> in it, too easy or too hard?  Did it take too long or too little time?
+
+>> Did you find that working on a particular part of the assignment gave
+>> you greater insight into some aspect of OS design?
+
+>> Is there some particular fact or hint we should give students in
+>> future quarters to help them solve the problems?  Conversely, did you
+>> find any of our guidance to be misleading?
+
+>> Do you have any suggestions for the TAs to more effectively assist
+>> students, either for future quarters or the remaining projects?
+
+>> Any other comments?
